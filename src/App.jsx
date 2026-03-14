@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const mileageRate = 0.67;
 
@@ -43,16 +43,29 @@ function formatMoney(value) {
 export default function App() {
   const [activeTab, setActiveTab] = useState("daily");
   const [entry, setEntry] = useState(emptyEntry);
-  const [dailyLogs, setDailyLogs] = useState([]);
-  const [phoneRows, setPhoneRows] = useState(
-    months.map((month) => ({
-      month,
-      totalBill: "",
-      workPercent: "",
-      deductibleAmount: "",
-      notes: "",
-    }))
-  );
+  const [dailyLogs, setDailyLogs] = useState(() => {
+  const saved = localStorage.getItem("dailyLogs");
+  return saved ? JSON.parse(saved) : [];
+});
+  const [phoneRows, setPhoneRows] = useState(() => {
+  const saved = localStorage.getItem("phoneRows");
+  return saved
+    ? JSON.parse(saved)
+    : months.map((month) => ({
+        month,
+        totalBill: "",
+        workPercent: "",
+        deductibleAmount: "",
+        notes: "",
+      }));
+});
+useEffect(() => {
+  localStorage.setItem("dailyLogs", JSON.stringify(dailyLogs));
+}, [dailyLogs]);
+
+useEffect(() => {
+  localStorage.setItem("phoneRows", JSON.stringify(phoneRows));
+}, [phoneRows]);
 
   const calculatedMiles = useMemo(() => {
     const start = toNumber(entry.startOdometer);
@@ -121,8 +134,12 @@ export default function App() {
   }
 
   function deleteEntry(id) {
-    setDailyLogs((prev) => prev.filter((row) => row.id !== id));
+  if (!window.confirm("Delete this entry?")) {
+    return;
   }
+
+  setDailyLogs((prev) => prev.filter((row) => row.id !== id));
+}
 
   function updatePhoneRow(index, field, value) {
     setPhoneRows((prev) => {
