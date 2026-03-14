@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
 const mileageRate = 0.67;
+const sheetUrl =
+  "https://script.google.com/macros/s/AKfycbzdZ3A8m893I8ydsbXr4Ny29R8H3ToGIU9Ui01gvD_AkDVQ3fadqF8pEbhM0Auqhwy6/exec";
 
 const emptyEntry = {
   date: "",
@@ -72,46 +74,58 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("dailyLogs", JSON.stringify(dailyLogs));
   }, [dailyLogs]);
-useEffect(() => {
-  localStorage.setItem("phoneRows", JSON.stringify(phoneRows));
-}, [phoneRows]);
 
-useEffect(() => {
-  localStorage.setItem("pendingSheetEntries", JSON.stringify(pendingSheetEntries));
-}, [pendingSheetEntries]);
-useEffect(() => {
-  async function resendPendingEntries() {
-    if (!navigator.onLine || pendingSheetEntries.length === 0) return;
+  useEffect(() => {
+    localStorage.setItem("phoneRows", JSON.stringify(phoneRows));
+  }, [phoneRows]);
 
-    const stillPending = [];
+  useEffect(() => {
+    localStorage.setItem(
+      "pendingSheetEntries",
+      JSON.stringify(pendingSheetEntries)
+    );
+  }, [pendingSheetEntries]);
 
-    for (const pendingEntry of pendingSheetEntries) {
-      try {
-        await fetch(
-          "https://script.google.com/macros/s/AKfycbx7su4IhemLrNdIZ72EUUeG0Q0rjsUWAu5YKKPQIQzzUFEOu6lDEiKCcwzdlaNplj4l/exec",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "text/plain;charset=utf-8",
-            },
-            body: JSON.stringify(pendingEntry),
-          }
-        );
-      } catch (error) {
-        stillPending.push(pendingEntry);
-      }
+  async function sendEntryToSheet(entryToSend) {
+    const response = await fetch(sheetUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8",
+      },
+      body: JSON.stringify(entryToSend),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to send entry to Google Sheet");
     }
 
-    setPendingSheetEntries(stillPending);
+    return response.text();
   }
 
-  resendPendingEntries();
-  window.addEventListener("online", resendPendingEntries);
+  useEffect(() => {
+    async function resendPendingEntries() {
+      if (!navigator.onLine || pendingSheetEntries.length === 0) return;
 
-  return () => {
-    window.removeEventListener("online", resendPendingEntries);
-  };
-}, [pendingSheetEntries]);
+      const stillPending = [];
+
+      for (const pendingEntry of pendingSheetEntries) {
+        try {
+          await sendEntryToSheet(pendingEntry);
+        } catch (error) {
+          stillPending.push(pendingEntry);
+        }
+      }
+
+      setPendingSheetEntries(stillPending);
+    }
+
+    resendPendingEntries();
+    window.addEventListener("online", resendPendingEntries);
+
+    return () => {
+      window.removeEventListener("online", resendPendingEntries);
+    };
+  }, [pendingSheetEntries]);
 
   const calculatedMiles = useMemo(() => {
     const start = toNumber(entry.startOdometer);
@@ -161,48 +175,42 @@ useEffect(() => {
     setEntry((prev) => ({ ...prev, [field]: value }));
   }
 
-async function saveEntry() {
+  async function saveEntry() {
+    if (isSaving) return;
 
-  if (isSaving) return;
+    setIsSaving(true);
 
-  setIsSaving(true);
+    const miles = toNumber(calculatedMiles);
 
-  const miles = toNumber(calculatedMiles);
+    if (!entry.date || !entry.purpose || miles <= 0) {
+      alert("Please enter at least a date, business purpose, and miles.");
+      setIsSaving(false);
+      return;
+    }
 
-  if (!entry.date || !entry.purpose || miles <= 0) {
-    alert("Please enter at least a date, business purpose, and miles.");
-    setIsSaving(false);
-    return;
-  }
+    const newEntry = {
+      id: Date.now(),
+      ...entry,
+      businessMiles: String(miles),
+    };
 
-  const newEntry = {
-    id: Date.now(),
-    ...entry,
-    businessMiles: String(miles),
-  };
+    setDailyLogs((prev) => [newEntry, ...prev]);
+    setEntry(emptyEntry);
 
-  setDailyLogs((prev) => [newEntry, ...prev]);
-  setEntry(emptyEntry);
-
-  try {
-    await fetch(
-      "https://script.google.com/macros/s/AKfycbx7su4IhemLrNdIZ72EUUeG0Q0rjsUWAu5YKKPQIQzzUFEOu6lDEiKCcwzdlaNplj4l/exec",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8",
-        },
-        body: JSON.stringify(newEntry),
+    try {
+      if (!navigator.onLine) {
+        setPendingSheetEntries((prev) => [...prev, newEntry]);
+      } else {
+        await sendEntryToSheet(newEntry);
       }
-    );
-  } catch (error) {
-    setPendingSheetEntries((prev) => [...prev, newEntry]);
+    } catch (error) {
+      setPendingSheetEntries((prev) => [...prev, newEntry]);
+    }
+
+    setIsSaving(false);
   }
 
-  setIsSaving(false);
-}
-
-function deleteEntry(id) {
+  function deleteEntry(id) {
     if (!window.confirm("Delete this entry?")) {
       return;
     }
@@ -330,10 +338,8 @@ function deleteEntry(id) {
                   <input
                     type="number"
                     value={calculatedMiles}
-                    onChange={(e) =>
-                      handleEntryChange("businessMiles", e.target.value)
-                    }
-                    style={styles.input}
+                    readOnly
+                    style={{ ...styles.input, backgroundColor: "#f3f4f6" }}
                   />
                 </div>
 
@@ -383,16 +389,16 @@ function deleteEntry(id) {
               </div>
 
               <button
-  style={{
-    ...styles.primaryButton,
-    opacity: isSaving ? 0.7 : 1,
-    cursor: isSaving ? "not-allowed" : "pointer",
-  }}
-  onClick={saveEntry}
-  disabled={isSaving}
->
-  {isSaving ? "Saving..." : "Save Entry"}
-</button>
+                style={{
+                  ...styles.primaryButton,
+                  opacity: isSaving ? 0.7 : 1,
+                  cursor: isSaving ? "not-allowed" : "pointer",
+                }}
+                onClick={saveEntry}
+                disabled={isSaving}
+              >
+                {isSaving ? "Saving..." : "Save Entry"}
+              </button>
             </div>
 
             <div style={styles.card}>
