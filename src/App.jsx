@@ -43,29 +43,32 @@ function formatMoney(value) {
 export default function App() {
   const [activeTab, setActiveTab] = useState("daily");
   const [entry, setEntry] = useState(emptyEntry);
-  const [dailyLogs, setDailyLogs] = useState(() => {
-  const saved = localStorage.getItem("dailyLogs");
-  return saved ? JSON.parse(saved) : [];
-});
-  const [phoneRows, setPhoneRows] = useState(() => {
-  const saved = localStorage.getItem("phoneRows");
-  return saved
-    ? JSON.parse(saved)
-    : months.map((month) => ({
-        month,
-        totalBill: "",
-        workPercent: "",
-        deductibleAmount: "",
-        notes: "",
-      }));
-});
-useEffect(() => {
-  localStorage.setItem("dailyLogs", JSON.stringify(dailyLogs));
-}, [dailyLogs]);
 
-useEffect(() => {
-  localStorage.setItem("phoneRows", JSON.stringify(phoneRows));
-}, [phoneRows]);
+  const [dailyLogs, setDailyLogs] = useState(() => {
+    const saved = localStorage.getItem("dailyLogs");
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [phoneRows, setPhoneRows] = useState(() => {
+    const saved = localStorage.getItem("phoneRows");
+    return saved
+      ? JSON.parse(saved)
+      : months.map((month) => ({
+          month,
+          totalBill: "",
+          workPercent: "",
+          deductibleAmount: "",
+          notes: "",
+        }));
+  });
+
+  useEffect(() => {
+    localStorage.setItem("dailyLogs", JSON.stringify(dailyLogs));
+  }, [dailyLogs]);
+
+  useEffect(() => {
+    localStorage.setItem("phoneRows", JSON.stringify(phoneRows));
+  }, [phoneRows]);
 
   const calculatedMiles = useMemo(() => {
     const start = toNumber(entry.startOdometer);
@@ -115,7 +118,7 @@ useEffect(() => {
     setEntry((prev) => ({ ...prev, [field]: value }));
   }
 
-  function saveEntry() {
+  async function saveEntry() {
     const miles = toNumber(calculatedMiles);
 
     if (!entry.date || !entry.purpose || miles <= 0) {
@@ -131,15 +134,34 @@ useEffect(() => {
 
     setDailyLogs((prev) => [newEntry, ...prev]);
     setEntry(emptyEntry);
+
+    try {
+      const response = await fetch(
+        "https://script.google.com/macros/s/AKfycbx7su4IhemLrNdIZ72EUUeG0Q0rjsUWAu5YKKPQIQzzUFEOu6lDEiKCcwzdlaNplj4l/exec",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8",
+          },
+          body: JSON.stringify(newEntry),
+        }
+      );
+
+      const text = await response.text();
+      alert("Google Sheet response: " + text);
+    } catch (error) {
+      alert("Google Sheet send failed");
+      console.error(error);
+    }
   }
 
   function deleteEntry(id) {
-  if (!window.confirm("Delete this entry?")) {
-    return;
-  }
+    if (!window.confirm("Delete this entry?")) {
+      return;
+    }
 
-  setDailyLogs((prev) => prev.filter((row) => row.id !== id));
-}
+    setDailyLogs((prev) => prev.filter((row) => row.id !== id));
+  }
 
   function updatePhoneRow(index, field, value) {
     setPhoneRows((prev) => {
