@@ -62,13 +62,56 @@ export default function App() {
         }));
   });
 
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [pendingSheetEntries, setPendingSheetEntries] = useState(() => {
+    const saved = localStorage.getItem("pendingSheetEntries");
+    return saved ? JSON.parse(saved) : [];
+  });
+
   useEffect(() => {
     localStorage.setItem("dailyLogs", JSON.stringify(dailyLogs));
   }, [dailyLogs]);
+useEffect(() => {
+  localStorage.setItem("phoneRows", JSON.stringify(phoneRows));
+}, [phoneRows]);
 
-  useEffect(() => {
-    localStorage.setItem("phoneRows", JSON.stringify(phoneRows));
-  }, [phoneRows]);
+useEffect(() => {
+  localStorage.setItem("pendingSheetEntries", JSON.stringify(pendingSheetEntries));
+}, [pendingSheetEntries]);
+useEffect(() => {
+  async function resendPendingEntries() {
+    if (!navigator.onLine || pendingSheetEntries.length === 0) return;
+
+    const stillPending = [];
+
+    for (const pendingEntry of pendingSheetEntries) {
+      try {
+        await fetch(
+          "https://script.google.com/macros/s/AKfycbx7su4IhemLrNdIZ72EUUeG0Q0rjsUWAu5YKKPQIQzzUFEOu6lDEiKCcwzdlaNplj4l/exec",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "text/plain;charset=utf-8",
+            },
+            body: JSON.stringify(pendingEntry),
+          }
+        );
+      } catch (error) {
+        stillPending.push(pendingEntry);
+      }
+    }
+
+    setPendingSheetEntries(stillPending);
+  }
+
+  resendPendingEntries();
+  window.addEventListener("online", resendPendingEntries);
+
+  return () => {
+    window.removeEventListener("online", resendPendingEntries);
+  };
+}, [pendingSheetEntries]);
 
   const calculatedMiles = useMemo(() => {
     const start = toNumber(entry.startOdometer);
@@ -118,44 +161,48 @@ export default function App() {
     setEntry((prev) => ({ ...prev, [field]: value }));
   }
 
-  async function saveEntry() {
-    const miles = toNumber(calculatedMiles);
+async function saveEntry() {
 
-    if (!entry.date || !entry.purpose || miles <= 0) {
-      alert("Please enter at least a date, business purpose, and miles.");
-      return;
-    }
+  if (isSaving) return;
 
-    const newEntry = {
-      id: Date.now(),
-      ...entry,
-      businessMiles: String(miles),
-    };
+  setIsSaving(true);
 
-    setDailyLogs((prev) => [newEntry, ...prev]);
-    setEntry(emptyEntry);
+  const miles = toNumber(calculatedMiles);
 
-    try {
-      const response = await fetch(
-        "https://script.google.com/macros/s/AKfycbx7su4IhemLrNdIZ72EUUeG0Q0rjsUWAu5YKKPQIQzzUFEOu6lDEiKCcwzdlaNplj4l/exec",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "text/plain;charset=utf-8",
-          },
-          body: JSON.stringify(newEntry),
-        }
-      );
-
-      const text = await response.text();
-      alert("Google Sheet response: " + text);
-    } catch (error) {
-      alert("Google Sheet send failed");
-      console.error(error);
-    }
+  if (!entry.date || !entry.purpose || miles <= 0) {
+    alert("Please enter at least a date, business purpose, and miles.");
+    setIsSaving(false);
+    return;
   }
 
-  function deleteEntry(id) {
+  const newEntry = {
+    id: Date.now(),
+    ...entry,
+    businessMiles: String(miles),
+  };
+
+  setDailyLogs((prev) => [newEntry, ...prev]);
+  setEntry(emptyEntry);
+
+  try {
+    await fetch(
+      "https://script.google.com/macros/s/AKfycbx7su4IhemLrNdIZ72EUUeG0Q0rjsUWAu5YKKPQIQzzUFEOu6lDEiKCcwzdlaNplj4l/exec",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+        },
+        body: JSON.stringify(newEntry),
+      }
+    );
+  } catch (error) {
+    setPendingSheetEntries((prev) => [...prev, newEntry]);
+  }
+
+  setIsSaving(false);
+}
+
+function deleteEntry(id) {
     if (!window.confirm("Delete this entry?")) {
       return;
     }
@@ -335,9 +382,17 @@ export default function App() {
                 />
               </div>
 
-              <button style={styles.primaryButton} onClick={saveEntry}>
-                Save Entry
-              </button>
+              <button
+  style={{
+    ...styles.primaryButton,
+    opacity: isSaving ? 0.7 : 1,
+    cursor: isSaving ? "not-allowed" : "pointer",
+  }}
+  onClick={saveEntry}
+  disabled={isSaving}
+>
+  {isSaving ? "Saving..." : "Save Entry"}
+</button>
             </div>
 
             <div style={styles.card}>
